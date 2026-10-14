@@ -56,11 +56,11 @@ http_first_line() {
     exec 3<&- 3>&-
     printf '%s' "$line"; } 2>/dev/null
 }
-r=$(http_first_line /vnc.html)
-case "$r" in *" 200"*) ok "GET /vnc.html -> 200" ;; *) bad "GET /vnc.html -> '${r:-no response}'" ;; esac
+r=$(http_first_line /index.html)
+case "$r" in *" 200"*) ok "GET /index.html -> 200" ;; *) bad "GET /index.html -> '${r:-no response}'" ;; esac
 r=$(http_first_line /)
-case "$r" in *" 200"*) ok "GET / -> 200 (index -> vnc.html alias present)" ;;
-                   *) bad "GET / -> '${r:-no response}' (no index alias; only /vnc.html reachable)" ;; esac
+case "$r" in *" 200"*) ok "GET / -> 200 (index.html opens automatically)" ;;
+                   *) bad "GET / -> '${r:-no response}' (no index.html; only /vnc.html reachable)" ;; esac
 
 # 5. The full browser path: WebSocket upgrade on the web port, then read the RFB
 #    banner back out *through* the proxy. This is what noVNC does; if this

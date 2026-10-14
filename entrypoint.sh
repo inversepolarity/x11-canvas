@@ -27,10 +27,11 @@ set -uo pipefail
 : "${VNC_PORT:=5900}"
 : "${WEB_PORT:=6080}"
 : "${WEB_BIND:=0.0.0.0}"                   # "" => bind all (websockify default)
-: "${NOVNC_ROOT:=/usr/share/novnc}"         # dir containing vnc.html
+: "${NOVNC_ROOT:=/usr/share/novnc}"         # dir containing index.html (alias of vnc.html)
 : "${VNC_PASSWORD:=}"                       # empty => -nopw (open RFB, no auth)
 : "${VNC_WINDOW:=}"                         # WM_CLASS/name regex => stream only that window
 : "${VNC_EXTRA:=}"                          # raw passthrough, e.g. "-ncache 10 -defer 40"
+: "${WALLPAPER:=/usr/share/x11-canvas/wallpaper}"  # image path or http(s) URL; "" disables
 : "${ROOT_COLOR:=}"                         # e.g. "#111111"; uses xsetroot if set
 : "${XVFB_EXTRA:=}"
 : "${RECORD:=}"                             # FILE => websockify --record (VNC session replay)
@@ -167,6 +168,32 @@ else
   log "WM=none: no window manager (apps will be undecorated and unmanaged)"
 fi
 
+# ---------- 3b. wallpaper ----------------------------------------------------
+# feh sets the root-window pixmap (and the _XROOTPMAP_ID property openbox
+# respects). A URL is fetched on the fly so `-e WALLPAPER=http://...` works;
+# a path is used directly. Empty WALLPAPER keeps the flat ROOT_COLOR.
+if [ -n "$WALLPAPER" ]; then
+  wp="$WALLPAPER"
+  case "$wp" in
+    http://*|https://*)
+      wp="$RUN_DIR/wallpaper.${wp##*.}"
+      if curl -fsSL "$WALLPAPER" -o "$wp" 2>/dev/null; then
+        log "downloaded wallpaper: $WALLPAPER"
+      else
+        log "could not download wallpaper $WALLPAPER; keeping ROOT_COLOR"
+        wp=""
+      fi
+      ;;
+  esac
+  if [ -n "$wp" ] && [ -e "$wp" ]; then
+    if feh --bg-fill "$wp" 2>/dev/null; then
+      log "wallpaper set: $wp"
+    else
+      log "feh could not set $wp; keeping ROOT_COLOR"
+    fi
+  fi
+fi
+
 # ---------- 4. the payload ---------------------------------------------------
 if [ "$APP" != none ]; then
   # `bash -c` so callers can write pipelines/args; for a simple command bash
@@ -236,14 +263,23 @@ web_args=(--web "$NOVNC_ROOT")
 [ -n "$WEB_BIND" ] && listen="${WEB_BIND}:${WEB_PORT}" || listen="$WEB_PORT"
 web_args+=("$listen" "localhost:${VNC_PORT}")
 
-[ -e "$NOVNC_ROOT/vnc.html" ] || die "no vnc.html in NOVNC_ROOT=$NOVNC_ROOT"
-# Bare http://host:PORT/ should land in the viewer, not a landing page.
-[ -e "$NOVNC_ROOT/index.html" ] || ln -s vnc.html "$NOVNC_ROOT/index.html" 2>/dev/null || true
+# noVNC ships vnc.html; make sure an index.html exists so http://host:PORT/
+# opens the viewer instead of a directory listing. Copy when we can write to
+# NOVNC_ROOT (build-time copy already does it for the shipped root), else alias.
+if [ ! -e "$NOVNC_ROOT/index.html" ]; then
+  cp "$NOVNC_ROOT/vnc.html" "$NOVNC_ROOT/index.html" 2>/dev/null \
+    || ln -s vnc.html "$NOVNC_ROOT/index.html" 2>/dev/null || true
+fi
+if [ ! -e "$NOVNC_ROOT/index.html" ] && [ ! -e "$NOVNC_ROOT/vnc.html" ]; then
+  log "FATAL: no vnc.html in NOVNC_ROOT=$NOVNC_ROOT"
+  log "FATAL: no index.html in NOVNC_ROOT=$NOVNC_ROOT"
+  die "no index.html (vnc.html) in NOVNC_ROOT=$NOVNC_ROOT"
+fi
 
 spawn web fatal websockify "${web_args[@]}"
 wait_until "web port $WEB_PORT" have_tcp "$WEB_PORT"
 
-log "ready:  http://localhost:${WEB_PORT}/vnc.html?autoconnect=true"
+log "ready:  http://localhost:${WEB_PORT}/?autoconnect=true"
 log "        raw VNC on :${VNC_PORT}   |   screen ${SCREEN} on ${DISPLAY}"
 
 # Block until a child exits; the fatal ones do this via kill -TERM $$.

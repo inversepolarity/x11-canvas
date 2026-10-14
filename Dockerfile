@@ -1,9 +1,11 @@
 # x11-canvas — bare Xvfb → x11vnc → websockify → browser canvas.
-# No Android, no Appium, no supervisor, no build secrets, nothing downloaded.
-FROM ubuntu:26.04
+# No Android, no Appium, no supervisor, no build secrets. The only download is
+# the optional desktop wallpaper (WALLPAPER_URL) baked in below.
+FROM debian:trixie-slim
 # `debian:trixie-slim` works identically; the package set below is Debian/Ubuntu-common.
 
 ARG DEBIAN_FRONTEND=noninteractive
+ARG WALLPAPER_URL="https://raw.githubusercontent.com/even-zero/media/refs/heads/main/e0/e0_wallpaper_01.jpg"
 
 #==========================
 # The entire dependency set
@@ -20,6 +22,9 @@ ARG DEBIAN_FRONTEND=noninteractive
 # xterm               a terminal on the canvas: right-click menu / debugging
 # xfonts-base         core X fonts, still needed by older X clients
 # fonts-dejavu-core   fontconfig fonts, needed by anything modern (GTK/Qt/browser)
+# firefox-esr         the browser behind openbox's "Web browser" menu entry
+# feh                 sets the root-window wallpaper (feh --bg-fill)
+# curl                fetches the wallpaper image (WALLPAPER_URL)
 #==========================
 RUN apt-get -qqy update \
  && apt-get -qqy install --no-install-recommends \
@@ -35,29 +40,44 @@ RUN apt-get -qqy update \
       xterm \
       xfonts-base \
       fonts-dejavu-core \
+      firefox-esr \
+      dbus-x11 \
+      fonts-liberation \
+      feh \
+      curl \
  && apt-get -qqy clean \
  && rm -rf /var/lib/apt/lists/*
 
-# X11 + VNC need a writable HOME and /tmp; run unprivileged (nothing here needs
-# root: no /dev/kvm, no chown of anything, no sudoers hack).
-RUN useradd --create-home --shell /bin/bash canvas
-USER canvas
-ENV HOME=/home/canvas \
+# noVNC ships vnc.html but no index.html, so http://host:port/ returns a
+# directory listing. Ship an index.html so the viewer opens automatically.
+RUN cp /usr/share/novnc/vnc.html /usr/share/novnc/index.html
+
+# Bake in the desktop wallpaper. Build with --build-arg WALLPAPER_URL=... to
+# change it, or override WALLPAPER at run time with a path or URL.
+RUN mkdir -p /usr/share/x11-canvas \
+ && curl -fsSL "$WALLPAPER_URL" -o /usr/share/x11-canvas/wallpaper \
+ && ls -l /usr/share/x11-canvas/wallpaper
+
+# Default to root so the interactive terminal (xterm) can install packages
+# and administer the container without sudo or password setup.
+ENV HOME=/root \
     DISPLAY=:99
 
-COPY --chown=canvas:canvas entrypoint.sh /usr/local/bin/x11-canvas-entrypoint
-COPY --chown=canvas:canvas smoke.sh       /usr/local/bin/x11-canvas-smoke
-COPY --chown=canvas:canvas selftest.sh    /usr/local/bin/x11-canvas-selftest
+COPY entrypoint.sh /usr/local/bin/x11-canvas-entrypoint
+COPY smoke.sh       /usr/local/bin/x11-canvas-smoke
+COPY selftest.sh    /usr/local/bin/x11-canvas-selftest
 RUN chmod 755 /usr/local/bin/x11-canvas-*
 
 # Defaults live here so `docker run -e ...` is the only knob you need.
 ENV SCREEN=1600x900x24 \
     WM=openbox \
     APP="xclock -update 1" \
+    MOZ_FORCE_DISABLE_CONTENT_SANDBOX=1 \
     VNC_PORT=5900 \
     WEB_PORT=6080 \
     WEB_BIND=0.0.0.0 \
     NOVNC_ROOT=/usr/share/novnc \
+    WALLPAPER=/usr/share/x11-canvas/wallpaper \
     ROOT_COLOR="#111111" \
     EXIT_ON_APP_EXIT=true
 
